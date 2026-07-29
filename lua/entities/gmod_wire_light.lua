@@ -1,7 +1,7 @@
 AddCSLuaFile()
 DEFINE_BASECLASS( "base_wire_entity" )
 ENT.PrintName       = "Wire Light"
-ENT.RenderGroup		= RENDERGROUP_BOTH
+ENT.WantsTranslucency = true
 ENT.WireDebugName	= "Light"
 
 function ENT:SetupDataTables()
@@ -34,7 +34,8 @@ if CLIENT then
 		return Color( self:GetR(), self:GetG(), self:GetB(), 255 )
 	end
 
-	function ENT:DrawTranslucent()
+	function ENT:DrawTranslucent(flags)
+		BaseClass.DrawTranslucent(self, flags)
 		if not self:GetOn() then return end
 
 		local LightPos = self:GetPos()
@@ -94,7 +95,7 @@ if CLIENT then
 
 		return w_total, h_total
 	end
-	
+
 	local function drawColorBox( color, x, y )
 		surface.SetDrawColor( color )
 		surface.DrawRect( x, y, color_box_size, color_box_size )

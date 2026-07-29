@@ -2,7 +2,7 @@ AddCSLuaFile()
 
 ENT.Base = "base_wire_entity"
 ENT.PrintName = "Wire Materializer"
-ENT.RenderGroup = RENDERGROUP_BOTH
+ENT.WantsTranslucency = true
 ENT.WireDebugName = "Materializer"
 
 function ENT:SetupDataTables()
@@ -50,4 +50,4 @@ function ENT:ShowOutput(value)
 	self:SetOverlayText("Material: " .. value)
 end
 
-duplicator.RegisterEntityClass("gmod_wire_materializer", WireLib.MakeWireEnt, "Data", "Material")
+duplicator.RegisterEntityClass("gmod_wire_materializer", WireLib.MakeWireEnt, "Data", "Material", "Range")

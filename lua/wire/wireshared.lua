@@ -151,7 +151,6 @@ end
 
 local table = table
 local pairs_sortvalues = pairs_sortvalues
-local ipairs_map = ipairs_map
 
 --------------------------------------------------------------------------------
 
@@ -307,7 +306,7 @@ elseif SERVER then
 	util.AddNetworkString("wire_clienterror")
 	function WireLib.ClientError(message, ply)
 		net.Start("wire_clienterror")
-			net.WriteString(message)
+			net.WriteString(string.sub(message, 1, 65532))
 		net.Send(ply)
 	end
 end
@@ -406,13 +405,6 @@ WireLib.NetQueue = {
 	end
 }
 setmetatable(WireLib.NetQueue, WireLib.NetQueue)
-end
-
-function WireLib.ErrorNoHalt(message)
-	-- ErrorNoHalt clips messages to 512 characters, so chain calls if necessary
-	for i=1,#message, 511 do
-		ErrorNoHalt(message:sub(i,i+510))
-	end
 end
 
 --- Generate a random version 4 UUID and return it as a string.
@@ -719,34 +711,6 @@ elseif CLIENT then
 	function WireLib._RemoveWire(eid) -- To remove the inputs without to remove the entity.
 		ents_with_inputs[eid] = nil
 		ents_with_outputs[eid] = nil
-	end
-
-	local flag = false
-	function WireLib.TestPorts()
-		flag = not flag
-		if flag then
-			local lasteid = 0
-			hook.Add("HUDPaint", "wire_ports_test", function()
-				local ent = LocalPlayer():GetEyeTraceNoCursor().Entity
-				--if not ent:IsValid() then return end
-				local eid = IsValid(ent) and ent:EntIndex() or lasteid
-				lasteid = eid
-
-				local text = "ID "..eid.."\nInputs:\n"
-				for _,name,tp,desc,connected in ipairs_map(ents_with_inputs[eid] or {}, unpack) do
-
-					text = text..(connected and "-" or " ")
-					text = text..string.format("%s (%s) [%s]\n", name, tp, desc)
-				end
-				text = text.."\nOutputs:\n"
-				for _,name,tp,desc in ipairs_map(ents_with_outputs[eid] or {}, unpack) do
-					text = text..string.format("%s (%s) [%s]\n", name, tp, desc)
-				end
-				draw.DrawText(text,"Trebuchet24",10,300,Color(255,255,255,255),0)
-			end)
-		else
-			hook.Remove("HUDPaint", "wire_ports_test")
-		end
 	end
 end
 
@@ -1226,16 +1190,20 @@ do
 			end
 		end)
 
-		hook.Add("PlayerButtonDown", MESSAGE_NAME, function(player, button)
-			if not player.SyncedBindings then return end
-			local binding = player.SyncedBindings[button]
-			hook.Run("PlayerBindDown", player, binding, button)
+		hook.Add("PlayerButtonDown", MESSAGE_NAME, function(ply, button)
+			local syncedBinds = ply.SyncedBindings
+			if not syncedBinds then return end
+
+			local binding = syncedBinds[button]
+			hook.Run("PlayerBindDown", ply, binding, button)
 		end)
 
-		hook.Add("PlayerButtonUp", MESSAGE_NAME, function(player, button)
-			if not player.SyncedBindings then return end
-			local binding = player.SyncedBindings[button]
-			hook.Run("PlayerBindUp", player, binding, button)
+		hook.Add("PlayerButtonUp", MESSAGE_NAME, function(ply, button)
+			local syncedBinds = ply.SyncedBindings
+			if not syncedBinds then return end
+
+			local binding = syncedBinds[button]
+			hook.Run("PlayerBindUp", ply, binding, button)
 		end)
 	end
 end
@@ -1312,6 +1280,29 @@ function WireLib.NotifyBuilder(msg, severity, color)
 	return ret
 end
 
+-- Worst case is about 200ms
+local regex_limits = {[0] = 50000000, 15000, 500, 150, 70, 40}
+
+function WireLib.CheckRegex(data, pattern, custom_limits)
+	local limits = custom_limits or regex_limits
+	local stripped, nrepl, nrepl2
+	-- strip escaped things
+	stripped, nrepl = string.gsub(pattern, "%%.", "")
+	-- strip bracketed things
+	stripped, nrepl2 = string.gsub(stripped, "%[.-%]", "")
+	-- strip captures
+	stripped = string.gsub(stripped, "[()]", "")
+	-- Find extenders
+	local n = 0 for i in string.gmatch(stripped, "[%+%-%*]") do n = n + 1 end
+	local msg
+	if n<=#limits then
+		if #data*(#stripped + nrepl - n + nrepl2)>limits[n] then msg = n.." ext search length too long ("..limits[n].." max)" else return end
+	else
+		msg = "too many extenders"
+	end
+	error("Regex is too complex! " .. msg)
+end
+
 local typeIDToStringTable = {
 	[TYPE_NONE] = "none",
 	[TYPE_NIL] = "nil",
@@ -1365,4 +1356,169 @@ local typeIDToStringTable = {
 -- Silly function to make printouts more userfriendly.
 function WireLib.typeIDToString(typeID)
 	return typeIDToStringTable[typeID] or "unregistered type"
+end
+
+do
+	--- A wrapper for Lua tables for use in E2.
+	--- When called as a function, will create a new `E2Table` instance. If `data` is specified, then automatically initializes the E2Table with that data.<br>
+	--- Otherwise, returns an empty E2Table.<br>
+	--- The `typeids` argument is optional. It will be used for typeids instead of type inferral. Useful for table-based types.<br>
+	---@class E2Table
+	---@field n table A table containing only numeric keys
+	---@field ntypes table A table with typeids corresponding to numeric keys
+	---@field s table A table containing only string keys
+	---@field stypes table A table with typeids corresponding to string keys
+	---@field size number The size of the table. This is equivalent to `table.Count(self.n) + table.Count(self.s)`
+	---@overload fun(data:{ [string|number]:any }?, typeids:{ [string|number]:any }?):E2Table
+	local E2Table = {}
+	E2Table.__index = E2Table
+
+	local e2t_tp_lut = {
+		[TYPE_NUMBER] = "n",
+		[TYPE_STRING] = "s",
+		[TYPE_ENTITY] = "e",
+		[TYPE_VECTOR] = "v",
+		[TYPE_ANGLE] = "a",
+		[TYPE_PHYSOBJ] = "b"
+	}
+	---Does a simple attempt at inferring the type of an object.
+	local function e2t_infer_tp(v)
+		local tp = TypeID(v)
+		local easy_tp = e2t_tp_lut[tp]
+		if easy_tp then return easy_tp end
+		if istable(v) then
+			local mt = getmetatable(v)
+			if mt then
+				if mt == E2Table then
+					return "t"
+				elseif E2Lib and mt == E2Lib.Function then
+					return "f"
+				end
+			end
+		end
+	end
+
+	---Sets the key to the value and assigns it the typeid. Special types will require `typeid` to be set.
+	---@param key string|number The key. Must be a string or number.
+	---@param value any The value to be stored.
+	---@param typeid string? The typeid of the value. Will be inferred if nil.
+	function E2Table:Set(key, value, typeid)
+		if not typeid then
+			typeid = e2t_infer_tp(value) or error(string.format("Unknown type for value [%s] at key [%s]", tostring(value), tostring(key)))
+		end
+
+		if key then
+			local dest, dest_type
+			if isnumber(key) then
+				dest, dest_type = self.n, self.ntypes
+			else
+				dest, dest_type = self.s, self.stypes
+			end
+			if not dest_type[key] then self.size = self.size + 1 end
+			dest[key] = value
+			dest_type[key] = typeid
+		end
+	end
+
+	---Returns the typeid and value of the key, if it exists.
+	---@param key string|number The key. Must be a string or number.
+	---@return string? typeid The typeid of the key or nil if it doesn't exist.
+	---@return any? value The value at the key if it exists.
+	function E2Table:Get(key)
+		local dest, dest_type
+		if isnumber(key) then
+			dest, dest_type = self.n, self.ntypes
+		else
+			dest, dest_type = self.s, self.stypes
+		end
+		return dest_type[key], dest[key]
+	end
+
+	---Returns the typeid, value, source typeid table, source table
+	local function e2t_get_ext(self, key)
+		local dest, dest_type
+		if isnumber(key) then
+			dest, dest_type = self.n, self.ntypes
+		else
+			dest, dest_type = self.s, self.stypes
+		end
+		return dest_type[key], dest[key], dest_type, dest
+	end
+
+	---Returns the typeid and value of the key and removes it from the table.
+	---This will not shift elements down the sequential part of the array.
+	---@param key string|number The key. Must be a string or number.
+	---@return string? typeid The typeid of the key or nil if it doesn't exist.
+	---@return any? value The value at the key if it exists.
+	function E2Table:Unset(key)
+		local typeid, value, dest_type, dest = e2t_get_ext(self, key)
+
+		if typeid then
+			dest[key] = nil
+			dest_type[key] = nil
+			self.size = self.size - 1
+		end
+		return typeid, value
+	end
+
+	---Returns the typeid and value of the key and removes it from the table.
+	---This *will* shift elements down the sequential part of the array.
+	---@param key string|number The key. Must be a string or number.
+	---@return string? typeid The typeid of the key or nil if it doesn't exist.
+	---@return any? value The value at the key if it exists.
+	function E2Table:Remove(key)
+		local typeid, value, dest_type, dest = e2t_get_ext(self, key)
+
+		if typeid then
+			if isnumber(key) and table.remove(dest_type, key --[[@as number]]) then
+				-- table.remove will return nil if it fails, meaning we need to unset
+				---@cast key number
+				table.remove(dest, key)
+			else
+				dest[key] = nil
+				dest_type[key] = nil
+			end
+			self.size = self.size - 1
+		end
+		return typeid, value
+	end
+
+	--- Returns an `E2Table` instance. If `data` is specified, then automatically initializes the E2Table with that data.
+	--- Otherwise, returns an empty E2Table.
+	---@param data { [number|string]:any }? The data to store in the E2Table.
+	---@param typeids { [number|string]:any }? Optional typeids. Does not need to include every typeid. Useful for table-based types.
+	---@return E2Table
+	local newE2Table = function(data, typeids)
+		---@cast E2Table -function
+		if data then
+			local n, ntypes, s, stypes, size = {}, {}, {}, {}, 0
+			for key, value in pairs(data) do
+				local dest, dest_types
+				if isnumber(key) then
+					dest = n
+					dest_types = ntypes
+				elseif isstring(key) then
+					dest = s
+					dest_types = stypes
+				else
+					error(string.format("Tried to create E2 table with invalid key type: %s, type: %s", tostring(key), type(key)))
+				end
+				local tp = typeids and typeids[key] or e2t_infer_tp(value)
+				if not tp then error(string.format("Unknown type for value [%s] at key [%s]", tostring(value), tostring(key))) end
+				dest[key] = value
+				dest_types[key] = tp
+				size = size + 1
+			end
+			return setmetatable({ n = n, ntypes = ntypes, s = s, stypes = stypes, size = size }, E2Table)
+		else
+			return setmetatable({ n = {}, ntypes = {}, s = {}, stypes = {}, size = 0 }, E2Table)
+		end
+	end
+	E2Table.New = newE2Table
+
+	function E2Table:__call(data, typeids)
+		return newE2Table(data, typeids)
+	end
+
+	WireLib.E2Table = E2Table
 end

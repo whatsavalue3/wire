@@ -66,7 +66,7 @@ function registerType(name, id, def, input_serialize, output_serialize, type_che
 end
 
 function wire_expression2_CallHook(hookname, ...)
-	if not wire_expression_callbacks[hookname] then return end
+	if not wire_expression_callbacks or not wire_expression_callbacks[hookname] then return end
 	local ret_array = {}
 	local errors = {}
 	local ok, ret
@@ -199,7 +199,8 @@ end
 ---@param args { [1]: string, [2]: string }[]?
 ---@param constructor fun(self: table)? # Constructor to run when E2 initially starts listening to this event. Passes E2 context
 ---@param destructor fun(self: table)? # Destructor to run when E2 stops listening to this event. Passes E2 context
-function E2Lib.registerEvent(name, args, constructor, destructor)
+---@param description string
+function E2Lib.registerEvent(name, args, constructor, destructor, description)
 	-- Ensure event starts with lowercase letter
 	-- assert(not E2Lib.Env.Events[name], "Possible addon conflict: Trying to override existing E2 event '" .. name .. "'")
 
@@ -231,6 +232,8 @@ function E2Lib.registerEvent(name, args, constructor, destructor)
 	E2Lib.Env.Events[name] = {
 		name = name,
 		args = args or {},
+		extension = E2Lib.currentextension,
+		description = description,
 
 		constructor = constructor,
 		destructor = destructor,
@@ -242,7 +245,9 @@ end
 ---@param name string
 ---@param args table?
 function E2Lib.triggerEvent(name, args)
-	assert(E2Lib.Env.Events[name], "E2Lib.triggerEvent on nonexisting event: '" .. name .. "'")
+	if not E2Lib.Env.Events[name] then
+		error("E2Lib.triggerEvent on nonexisting event: '" .. name .. "'", 2)
+	end
 
 	local event_listeners = E2Lib.Env.Events[name].listening
 
@@ -261,7 +266,9 @@ end
 ---@param args table
 ---@param ignore table<Entity, true>
 function E2Lib.triggerEventOmit(name, args, ignore)
-	assert(E2Lib.Env.Events[name], "E2Lib.triggerEventOmit on nonexisting event: '" .. name .. "'")
+	if not E2Lib.Env.Events[name] then
+		error("E2Lib.triggerEventOmit on nonexisting event: '" .. name .. "'", 2)
+	end
 
 	local event_listeners = E2Lib.Env.Events[name].listening
 
@@ -300,18 +307,16 @@ if SERVER then
 	include("extloader.lua")
 
 	-- -- Transfer E2 function info to the client for validation and syntax highlighting purposes -- --
-
-	local miscdata = {} -- Will contain {E2 types info, constants}, this whole table is under 1kb
-	local functiondata = {} -- Will contain {functionname = {returntype, cost, argnames, extension}, this will be between 50-100kb
-
 	-- Fills out the above two tables
-	function wire_expression2_prepare_functiondata()
+	local function getE2FunctionData()
 		-- Sanitize events so 'listening' e2's aren't networked
 		local events_sanitized = {}
 		for evt, data in pairs(E2Lib.Env.Events) do
 			events_sanitized[evt] = {
 				name = data.name,
-				args = data.args
+				args = data.args,
+				extension = data.extension,
+				description = data.description
 			}
 		end
 
@@ -320,19 +325,21 @@ if SERVER then
 			types[typename] = v[1] -- typeid (s)
 		end
 
-		miscdata = { types, wire_expression2_constants, events_sanitized }
-		functiondata = {}
+		local miscdata = { types, wire_expression2_constants, events_sanitized }
+		local functiondata = {}
 
 		for signature, v in pairs(wire_expression2_funcs) do
 			functiondata[signature] = { v[2], v[4], v.argnames, v.extension, v.attributes } -- ret (s), cost (n), argnames (t), extension (s), attributes (t)
 		end
-	end
 
-	wire_expression2_prepare_functiondata()
+		return miscdata, functiondata
+	end
 
 	-- Send everything
 	local function sendData(ply)
 		if not (IsValid(ply) and ply:IsPlayer()) then return end
+
+		local miscdata, functiondata = getE2FunctionData()
 
 		local data = WireLib.von.serialize( {
 			miscdata = miscdata,

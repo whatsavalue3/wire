@@ -330,6 +330,7 @@ number_of_keys = number_of_keys + 3
 
 local function UpdateKeys(ply, bind, key, state)
 	local uid = ply:SteamID()
+	if table.IsEmpty(KeyAlert) then return end
 
 	local keystate = {
 		runByKey = ply,
@@ -363,14 +364,14 @@ local function triggerKey(ply,bind,key,state)
 	end)
 end
 
-hook.Add("PlayerBindDown", "Exp2KeyReceivingDown", function(player, binding, button)
-	triggerKey(player,binding,button,true)
-	E2Lib.triggerEvent("keyPressed", {player, keys_lookup[button], 1, binding or ""})
+hook.Add("PlayerBindDown", "Exp2KeyReceivingDown", function(ply, binding, button)
+	triggerKey(ply,binding,button,true)
+	E2Lib.triggerEvent("keyPressed", {ply, keys_lookup[button], 1, binding or ""})
 end)
 
-hook.Add("PlayerBindUp", "Exp2KeyReceivingUp", function(player, binding, button)
-	triggerKey(player,binding,button,false)
-	E2Lib.triggerEvent("keyPressed", {player, keys_lookup[button], 0, binding or ""})
+hook.Add("PlayerBindUp", "Exp2KeyReceivingUp", function(ply, binding, button)
+	triggerKey(ply,binding,button,false)
+	E2Lib.triggerEvent("keyPressed", {ply, keys_lookup[button], 0, binding or ""})
 end)
 
 local function toggleRunOnKeys(self,ply,on,filter)
@@ -431,7 +432,7 @@ __e2setcost(1)
 --- Returns user if the chip is being executed because of a key event.
 [nodiscard, deprecated = "Use the keyPressed event instead"]
 e2function entity keyClk()
-	if not self.data.runOnKeys then return nil end
+	if not self.data.runOnKeys then return NULL end
 	return self.data.runOnKeys.runByKey
 end
 
@@ -500,15 +501,10 @@ end, function(self)
 	self.entity.Use = nil
 end)
 
-
--- isTyping
-local plys = {}
-concommand.Add("E2_StartChat",function(ply,cmd,args) plys[ply] = true end)
-concommand.Add("E2_FinishChat",function(ply,cmd,args) plys[ply] = nil end)
-hook.Add("PlayerDisconnected","E2_istyping",function(ply) plys[ply] = nil end)
-
 e2function number entity:isTyping()
-	return plys[this] and 1 or 0
+	if not IsValid(this) then return self:throw("Invalid entity!", 0) end
+	if not this:IsPlayer() then return self:throw("Expected a Player but got Entity", 0) end
+	return this:IsTyping() and 1 or 0
 end
 
 --------------------------------------------------------------------------------

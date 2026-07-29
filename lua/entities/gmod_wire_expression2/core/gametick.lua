@@ -26,25 +26,20 @@ e2function number tickClk()
 	return self.data.tickrun and 1 or 0
 end
 
+E2Lib.registerEvent("tick")
+
 hook.Add("Think", "Expression2TickClock", function()
-	-- This additional step is needed because we cant modify registered_chips while it is being iterated.
-	local entities = {}
-	local i = 1
-
 	for entity in pairs(registered_chips) do
-		if entity:IsValid() then
-			entities[i] = entity
-			i = i + 1
-		end
-	end
+		local tab = entity:GetTable()
 
-	for _, entity in ipairs(entities) do
-		entity.context.data.tickrun = true
-		entity:Execute()
-		entity.context.data.tickrun = nil
+		-- For some reason entity can be NULL? (See #3353)
+		if not tab then registered_chips[entity] = nil continue end
+		local data = tab.context.data
+
+		data.tickrun = true
+		tab.Execute(entity)
+		data.tickrun = nil
 	end
 
 	E2Lib.triggerEvent("tick")
 end)
-
-E2Lib.registerEvent("tick")

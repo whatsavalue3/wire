@@ -18,7 +18,7 @@
 --  register("gmod_foo_sent", {
 --  	["Model"] = {TYPE_STRING, "models/maxofs2d/button_05.mdl"},
 --  	["FooTable"] = {
---      	["FooBool"] = {TYPE_BOOL, true}, ["FooNumber"] = {TYPE_NUMBER, 1}
+--	  		["FooBool"] = {TYPE_BOOL, true}, ["FooNumber"] = {TYPE_NUMBER, 1}
 --  	}
 --  })
 --
@@ -44,7 +44,7 @@
 -- TIP: To return a strict-only error in _preFactory, or _postFactory, just return a string, which contains the error message.
 -- 		(If you return a string to non-strict E2, obv it will also stop spawning the entity)
 
--- Supported types (to which can WireLib.castE2ValueToLuaValue cast E2 values): 
+-- Supported types (to which can WireLib.castE2ValueToLuaValue cast E2 values):
 -- TYPE_STRING, TYPE_NUMBER, TYPE_BOOL, TYPE_ENTITY, TYPE_VECTOR,
 -- TYPE_COLOR, TYPE_TABLE, TYPE_USERDATA, TYPE_ANGLE, TYPE_DAMAGEINFO,
 -- TYPE_MATERIAL, TYPE_EFFECTDATA, TYPE_MATRIX
@@ -554,8 +554,12 @@ register("gmod_wire_egp", {
 	_preFactory = function(ply, self)
 		self.model = self.Model
 	end,
+	_postFactory = function(ply, self, enttbl)
+		self:SetTranslucent( enttbl.Translucent )
+	end,
 
 	["Model"] = {TYPE_STRING, "models/kobilica/wiremonitorbig.mdl", "Path to model"},
+	["Translucent"] = {TYPE_BOOL, false, "Transparent background"},
 })
 
 register("gmod_wire_egp_hud", {
@@ -821,7 +825,41 @@ register("gmod_wire_gpulib_controller", {
 })
 
 register("gmod_wire_clutch", {
+	_preFactory = function(ply, self)
+		-- Check if Pairs is a table of {Ent1, Ent2} pairs
+		if not istable(self.Pairs) then return "'Pairs' must be a table!" end
+		for k, v in ipairs(self.Pairs) do
+			if #v ~= 2 then
+				return ("'Pairs' entry #%d must be an array of 2 entries!"):format(k)
+			end
+			if not istable(v) or not IsValid(v[1]) or not IsValid(v[2]) then
+				return ("'Pairs' entry #%d must be an array of valid entities!"):format(k)
+			end
+			if v[1] == v[2] then
+				return ("'Pairs' entry #%d: Ent1 and Ent2 must be different entities!"):format(k)
+			end
+			if v[1]:IsPlayer() or v[2]:IsPlayer() then
+				return ("'Pairs' entry #%d: Entities cannot be players!"):format(k)
+			end
+			if v[1]:IsNPC() or v[2]:IsNPC() then
+				return ("'Pairs' entry #%d: Entities cannot be NPCs!"):format(k)
+			end
+			if GetOwner(v[1]) ~= ply or GetOwner(v[2]) ~= ply then
+				return ("'Pairs' entry #%d: You do not own entities!"):format(k)
+			end
+		end
+	end,
+	_postFactory = function(ply, self, enttbl)
+		PrintMessage(HUD_PRINTCONSOLE, type(self) .. ", " .. type(enttbl))
+		PrintMessage(HUD_PRINTCONSOLE, tostring(self))
+		PrintMessage(HUD_PRINTCONSOLE, tostring(enttbl))
+		for _, v in ipairs(enttbl.Pairs) do
+			self:AddClutch(v[1], v[2])
+		end
+	end,
+
 	["Model"] = {TYPE_STRING, "models/jaanus/wiretool/wiretool_siren.mdl", "Path to model"},
+	["Pairs"] = {TYPE_TABLE, {}, "A table of arrays/tables, where each holds exactly 2 valid, non-player, non-NPC entities."},
 })
 
 register("gmod_wire_input", {
@@ -1099,8 +1137,8 @@ register("gmod_wire_value", {
 			VECTOR2 = function(val, e2TypeID)
 					if e2TypeID == TYPE_TABLE and #val >= 2 and isnumber(val[1]) and isnumber(val[2]) then return val[1]..", "..val[2] end
 					if e2TypeID == TYPE_STRING then
-						local x,y,z = string.match( val, "^ *([^%s,]+) *, *([^%s,]+) *$" )
-						if x and y and z then return x..", "..y..", "..z end
+						local x,y = string.match( val, "^ *([^%s,]+) *, *([^%s,]+) *$" )
+						if x and y then return x..", "..y end
 					end
 
 					return nil
@@ -1163,7 +1201,7 @@ register("gmod_wire_value", {
 				elseif e2TypeID == TYPE_VECTOR then val = {"VECTOR", castE2TypeToWireValueType["VECTOR"](val, e2TypeID)}
 				elseif e2TypeID == TYPE_ANGLE then val = {"ANGLE", castE2TypeToWireValueType["ANGLE"](val, e2TypeID)}
 				elseif e2TypeID == TYPE_STRING then val = {"STRING", castE2TypeToWireValueType["STRING"](val, e2TypeID)}
-				else return "Incorrect 'value' parameter #"..i.." type! Expected table (Ex. table(\"normal\", 0)). Got: "..type( steamid ) end
+				else return "Incorrect 'value' parameter #"..i.." type! Expected table (Ex. table(\"normal\", 0)). Got: "..type( val ) end
 			elseif not isnumber(val[1]) then -- Plain table
 				if TypeID(val[1]) ~= TYPE_STRING then return "Incorrect 'value' parameter #"..i.."[1] type! Expected string ('NORMAL/VECTOR/VECTOR2/VECTOR4/ANGLE/STRING'). Got: "..type( val ) end
 
@@ -1176,15 +1214,15 @@ register("gmod_wire_value", {
 				end
 				val = {wireValueType, CastFunc(val[2], TypeID(val[2]))}
 			elseif #val == 2 then -- vector2
-				local tempVal = castE2TypeToWireValueType["VECTOR2"](val[2], typeID(val[2]))
+				local tempVal = castE2TypeToWireValueType["VECTOR2"](val, TypeID(val))
 				if not tempVal then
 					return "Incorrect 'value' parameter #"..i.." value! Expected 'VECTOR2'. Got: "..tostring(val[2])
 				end
 
 				val = {"VECTOR2", tempVal}
 			elseif #val==4 then -- vector4
-				local tempVal = castE2TypeToWireValueType["VECTOR4"](val[2], typeID(val[2]))
-				if not tempVal then return "Incorrect 'value' parameter #"..i.." value! Expected 'VECTOR2'. Got: "..tostring(val[2]) end
+				local tempVal = castE2TypeToWireValueType["VECTOR4"](val, TypeID(val))
+				if not tempVal then return "Incorrect 'value' parameter #"..i.." value! Expected 'VECTOR4'. Got: "..tostring(val[2]) end
 
 				val = {"VECTOR4", tempVal}
 			else
@@ -1202,7 +1240,7 @@ register("gmod_wire_value", {
 	end,
 
 	["Model"] = {TYPE_STRING, "models/kobilica/value.mdl", "Path to model"},
-	["value"] = {TYPE_TABLE, {}, "Values to be stored. Can either be direct value (type will be auto found), array of direct values (types will be auto found), or sequential table of arrays with arr[1]==type, arr[2]==value. (Ex. - \"value\" = table(\n    array(\"VECTOR\", vec(25)), array(\"string\", \"foo\")))"},
+	["value"] = {TYPE_TABLE, {}, "Values to be stored. Can either be direct value (type will be auto found), array of direct values (types will be auto found), or sequential table of arrays with arr[1]==type, arr[2]==value. (Ex. - \"value\" = table(\n	array(\"VECTOR\", vec(25)), array(\"string\", \"foo\")))"},
 })
 
 register("gmod_wire_adv_emarker", {
@@ -1270,4 +1308,21 @@ register("gmod_wire_gate", {
 
 register("gmod_wire_freezer", {
 	["Model"] = {TYPE_STRING, "models/jaanus/wiretool/wiretool_siren.mdl", "Path to model"},
+})
+
+register("gmod_wire_painter", {
+	["Model"] = {TYPE_STRING, "models/jaanus/wiretool/wiretool_siren.mdl", "Path to model"},
+	["Decal"] = {TYPE_STRING, "Blood", "Decal name to use for painting"},
+	["Range"] = {TYPE_NUMBER, 2048, "Length of the paint beam"},
+})
+
+register("gmod_wire_materializer", {
+	["Model"] = {TYPE_STRING, "models/jaanus/wiretool/wiretool_siren.mdl", "Path to model"},
+	["Material"] = {TYPE_STRING, "debug/env_cubemap_model", "Default material"},
+	["Range"] = {TYPE_NUMBER, 2048, "Length of the materializer beam"},
+})
+
+register("gmod_wire_buoyancy", {
+	["Model"] = {TYPE_STRING, "models/jaanus/wiretool/wiretool_siren.mdl", "Path to model"},
+	["Percent"] = {TYPE_NUMBER, 1, "Buoyancy coefficient"},
 })

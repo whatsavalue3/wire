@@ -84,16 +84,18 @@ function WireLib.TriggerInput(ent, name, value, ...)
 		input.TriggerLimit = input.TriggerLimit - 1
 	end
 
-	local ok, ret = xpcall(triggerInput, debug.traceback, ent, name, value, ...)
+	local ok = ProtectedCall(triggerInput, ent, name, value, ...)
+
 	if not ok then
 		local ply = WireLib.GetOwner(ent)
-		local validPly = IsValid(ply)
-		local owner_msg = validPly and (" by %s"):format(tostring(ply)) or ""
-		local message = ("Wire error (%s%s):\n%s\n"):format(tostring(ent), owner_msg, ret)
-		WireLib.ErrorNoHalt(message)
-		if validPly then WireLib.ClientError(message, ply) end
+
+		if IsValid(ply) then
+			WireLib.ClientError("Wire error (" .. tostring(ent) .. ")", ply)
+		end
 	end
 end
+
+local newE2Table = WireLib.E2Table.New
 
 --- Array of data types for Wiremod.
 ---@type table<string, { Zero: (fun(): any), Validator: (fun(val: any): boolean) }>
@@ -154,7 +156,7 @@ WireLib.DT = {
 	},
 	TABLE = {
 		Zero = function()
-			return { n = {}, ntypes = {}, s = {}, stypes = {}, size = 0 }
+			return newE2Table()
 		end,
 		Validator = function(t)
 			return istable(t)
@@ -201,6 +203,107 @@ WireLib.DT = {
 		BiDir = true
 	},
 }
+
+--- Conversion factors for unit conversion gates and E2 functions.
+--- Each value represents the factor to convert from natural units to this unit.
+--- Natural units: inches for length/speed, kilograms for weight.
+---
+--- Unit abbreviations:
+---   u   - Source unit (1 Source Unit = 0.75 inches)
+---         See: http://developer.valvesoftware.com/wiki/Dimensions#Map_Grid_Units:_quick_reference
+---   mm  - millimeter
+---   cm  - centimeter
+---   dm  - decimeter
+---   m   - meter
+---   km  - kilometer
+---   in  - inch
+---   ft  - foot
+---   yd  - yard
+---   mi  - mile
+---   nmi - nautical mile
+---   g   - gram
+---   kg  - kilogram
+---   t   - tonne
+---   oz  - ounce
+---   lb  - pound
+---@type table<string, table<string, number>>
+WireLib.UnitConv = {
+    --- Speed units (natural unit: in/s)
+    speed = {
+        ["u/s"]   = 1 / 0.75,
+        ["u/m"]   = 60 * (1 / 0.75),
+        ["u/h"]   = 3600 * (1 / 0.75),
+        ["mm/s"]  = 25.4,
+        ["cm/s"]  = 2.54,
+        ["dm/s"]  = 0.254,
+        ["m/s"]   = 0.0254,
+        ["km/s"]  = 0.0000254,
+        ["in/s"]  = 1,
+        ["ft/s"]  = 1 / 12,
+        ["yd/s"]  = 1 / 36,
+        ["mi/s"]  = 1 / 63360,
+        ["nmi/s"] = 127 / 9260000,
+        ["mm/m"]  = 60 * 25.4,
+        ["cm/m"]  = 60 * 2.54,
+        ["dm/m"]  = 60 * 0.254,
+        ["m/m"]   = 60 * 0.0254,
+        ["km/m"]  = 60 * 0.0000254,
+        ["in/m"]  = 60,
+        ["ft/m"]  = 60 / 12,
+        ["yd/m"]  = 60 / 36,
+        ["mi/m"]  = 60 / 63360,
+        ["nmi/m"] = 60 * 127 / 9260000,
+        ["mm/h"]  = 3600 * 25.4,
+        ["cm/h"]  = 3600 * 2.54,
+        ["dm/h"]  = 3600 * 0.254,
+        ["m/h"]   = 3600 * 0.0254,
+        ["km/h"]  = 3600 * 0.0000254,
+        ["in/h"]  = 3600,
+        ["ft/h"]  = 3600 / 12,
+        ["yd/h"]  = 3600 / 36,
+        ["mi/h"]  = 3600 / 63360,
+        ["nmi/h"] = 3600 * 127 / 9260000,
+        ["mph"]   = 3600 / 63360,
+        ["knots"] = 3600 * 127 / 9260000,
+        ["mach"]  = 0.0254 / 295,
+    },
+    --- Length units (natural unit: inches)
+    length = {
+        ["u"]   = 1 / 0.75,
+        ["mm"]  = 25.4,
+        ["cm"]  = 2.54,
+        ["dm"]  = 0.254,
+        ["m"]   = 0.0254,
+        ["km"]  = 0.0000254,
+        ["in"]  = 1,
+        ["ft"]  = 1 / 12,
+        ["yd"]  = 1 / 36,
+        ["mi"]  = 1 / 63360,
+        ["nmi"] = 127 / 9260000,
+    },
+    --- Weight units (natural unit: kilograms)
+    weight = {
+        ["g"]  = 1000,
+        ["kg"] = 1,
+        ["t"]  = 0.001,
+        ["oz"] = 1 / 0.028349523125,
+        ["lb"] = 1 / 0.45359237,
+    },
+}
+
+--- Returns the conversion factor between two units.
+--- Returns nil if units are unknown or of different types.
+---@param from string
+---@param to string
+---@return number|nil
+function WireLib.ConvertUnit(from, to)
+    for _, tbl in pairs(WireLib.UnitConv) do
+        if tbl[from] and tbl[to] then
+            return tbl[to] / tbl[from]
+        end
+    end
+    return nil
+end
 
 --- Gets default value of a WireLib type.
 --- Assumes `type` is a valid string type in the WireLib.DT table.
@@ -581,7 +684,7 @@ local function Wire_Link(dst, dstid, src, srcid, path)
 	WireLib.TriggerInput(dst, dstid, output.Value)
 end
 
-function WireLib.TriggerOutput(ent, oname, value, iter)
+function WireLib.TriggerOutput(ent, oname, value, iter, force)
 	if not entIsValid(ent) then return end
 	if not HasPorts(ent) then return end
 
@@ -597,7 +700,7 @@ function WireLib.TriggerOutput(ent, oname, value, iter)
 		value = ty.Zero()
 	end
 
-	if value ~= output.Value or output.Type == "ARRAY" or output.Type == "TABLE" or (output.Type == "ENTITY" and not rawequal(value, output.Value) --[[Covers the NULL==NULL case]]) then
+	if value ~= output.Value or output.Type == "ARRAY" or output.Type == "TABLE" or (output.Type == "ENTITY" and not rawequal(value, output.Value) --[[Covers the NULL==NULL case]]) or force then
 		local timeOfFrame = CurTime()
 		if timeOfFrame ~= output.TriggerTime then
 			-- Reset the TriggerLimit every frame
@@ -1068,14 +1171,11 @@ function WireLib.NumModelSkins(model)
 	return info and info.SkinCount
 end
 
---- @return whether the given player can spawn an object with the given model and skin
-function WireLib.CanModel(player, model, skin)
+--- @return Whether the given player can spawn an object with the given model and skin
+function WireLib.CanModel(ply, model, skin)
 	if not util.IsValidModel(model) then return false end
-	if skin ~= nil then
-		local count = WireLib.NumModelSkins(model)
-		if skin < 0 or (count and skin >= count) then return false end
-	end
-	if IsValid(player) and player:IsPlayer() and not hook.Run("PlayerSpawnObject", player, model, skin) then return false end
+	if IsValid(ply) and ply:IsPlayer() and not hook.Run("PlayerSpawnObject", ply, model, skin or 0) then return false end
+
 	return true
 end
 
@@ -1248,26 +1348,6 @@ concommand.Add("wireversion", function(ply)
 		print(text)
 	end
 end, nil, "Prints the server's Wiremod version")
-
-function WireLib.CheckRegex(data, pattern)
-	local limits = {[0] = 50000000, 15000, 500, 150, 70, 40} -- Worst case is about 200ms
-	local stripped, nrepl, nrepl2
-	-- strip escaped things
-	stripped, nrepl = string.gsub(pattern, "%%.", "")
-	-- strip bracketed things
-	stripped, nrepl2 = string.gsub(stripped, "%[.-%]", "")
-	-- strip captures
-	stripped = string.gsub(stripped, "[()]", "")
-	-- Find extenders
-	local n = 0 for i in string.gmatch(stripped, "[%+%-%*]") do n = n + 1 end
-	local msg
-	if n<=#limits then
-		if #data*(#stripped + nrepl - n + nrepl2)>limits[n] then msg = n.." ext search length too long ("..limits[n].." max)" else return end
-	else
-		msg = "too many extenders"
-	end
-	error("Regex is too complex! " .. msg)
-end
 
 local material_blacklist = {
 	["pp/copy"] = true,

@@ -1,6 +1,6 @@
 local wire_expression2_entity_trails_max = CreateConVar("wire_expression2_entity_trails_max", 30, FCVAR_ARCHIVE, "Max amount of trails a player can make. 0 - to disable trails. (Limit is shared between E2s of a player)", 0)
 
-registerType("entity", "e", nil,
+registerType("entity", "e", NULL,
 	nil,
 	function(self,output) return output or NULL end,
 	nil,
@@ -69,13 +69,17 @@ end
 --[[******************************************************************************]]
 
 e2function entity entity(id)
-	local ent = ents.GetByIndex(id)
-	return IsValid(ent) and ent or nil
+	return ents.GetByIndex(id)
 end
 
 e2function number entity:id()
 	if not IsValid(this) then return self:throw("Invalid entity!", 0) end
 	return this:EntIndex()
+end
+
+e2function number entity:mapCreationID()
+	if not IsValid(this) then return self:throw("Invalid entity!", 0) end
+	return this:MapCreationID()
 end
 
 e2function number entity:creationID()
@@ -122,8 +126,8 @@ e2function string entity:model()
 end
 
 e2function entity entity:owner()
-	if not IsValid(this) then return self:throw("Invalid entity!", nil) end
-	return getOwner(self, this)
+	if not IsValid(this) then return self:throw("Invalid entity!", NULL) end
+	return getOwner(self, this) or NULL
 end
 
 __e2setcost(100)
@@ -155,9 +159,7 @@ e2function number entity:setEditProperty(string key, string value)
 	if not IsValid(this) then return self:throw("Invalid entity!", 0) end
 	if not isOwner(self, this) then return self:throw("You do not own this entity!", 0) end
 	if not this.Editable then return self:throw("Tried to edit non-editable entity!", 0) end
-	if not canProperty(self.player, this, "editentity") then return self:throw("Gamemode disallowed editing this entity!", 0) end
 
-	key = key:lower()
 	local edit = this:GetEditingData()[key]
 	if not edit then return self:throw("Property '" .. key .. "' does not exist on entity!", 0) end
 	if not canEditVariable(this, self.player, key, value, edit) then return self:throw("Server disallowed editing this property!", 0) end
@@ -230,6 +232,11 @@ end
 e2function vector entity:velL()
 	if not IsValid(this) then return self:throw("Invalid entity!", Vector(0, 0, 0)) end
 	return this:WorldToLocal(this:GetVelocity() + this:GetPos())
+end
+
+e2function vector entity:velGroundSpeed()
+	if not IsValid(this) then return self:throw("Invalid entity!", Vector(0, 0, 0)) end
+	return this:GetGroundSpeedVelocity()
 end
 
 [nodiscard]
@@ -526,6 +533,11 @@ e2function string entity:getMaterial()
 	return this:GetMaterial() or ""
 end
 
+e2function number entity:getMaterialType()
+	if not IsValid(this) then return self:throw("Invalid entity!", -1) end
+	return this:GetMaterialType()
+end
+
 e2function string entity:getSubMaterial(index)
 	if not IsValid(this) then return self:throw("Invalid entity!", "") end
 	return this:GetSubMaterial(index-1) or ""
@@ -539,6 +551,11 @@ end
 e2function number entity:getModelScale()
 	if not IsValid(this) then return self:throw("Invalid entity!", 0) end
 	return this:GetModelScale()
+end
+
+e2function number entity:getMoveType()
+	if not IsValid(this) then return self:throw("Invalid entity!", -1) end
+	return this:GetMoveType()
 end
 
 __e2setcost(20)
@@ -667,6 +684,34 @@ e2function number entity:isPenetrating()
 	if phys:IsPenetrating() then return 1 else return 0 end
 end
 
+E2Lib.registerConstant("EF_BONEMERGE", EF_BONEMERGE)
+E2Lib.registerConstant("EF_BONEMERGE_FASTCULL", EF_BONEMERGE_FASTCULL)
+E2Lib.registerConstant("EF_BRIGHTLIGHT", EF_BRIGHTLIGHT)
+E2Lib.registerConstant("EF_DIMLIGHT", EF_DIMLIGHT)
+E2Lib.registerConstant("EF_NOINTERP", EF_NOINTERP)
+E2Lib.registerConstant("EF_NOSHADOW", EF_NOSHADOW)
+E2Lib.registerConstant("EF_NODRAW", EF_NODRAW)
+E2Lib.registerConstant("EF_NORECEIVESHADOW", EF_NORECEIVESHADOW)
+E2Lib.registerConstant("EF_ITEM_BLINK", EF_ITEM_BLINK)
+E2Lib.registerConstant("EF_PARENT_ANIMATES", EF_PARENT_ANIMATES)
+E2Lib.registerConstant("EF_FOLLOWBONE", EF_FOLLOWBONE)
+E2Lib.registerConstant("EF_NOFLASHLIGHT", EF_NOFLASHLIGHT)
+
+e2function number entity:getEffects()
+	if not IsValid(this) then return self:throw("Invalid entity!", -1) end
+	return this:GetEffects()
+end
+
+e2function number entity:getNoDraw()
+	if not IsValid(this) then return self:throw("Invalid entity!", 0) end
+	return this:GetNoDraw() and 1 or 0
+end
+
+e2function number entity:isEffectActive(effect)
+	if not IsValid(this) then return self:throw("Invalid entity!", 0) end
+	return this:IsEffectActive(effect) and 1 or 0
+end
+
 --[[******************************************************************************]]
 
 __e2setcost(30) -- temporary
@@ -735,13 +780,12 @@ e2function void entity:applyTorque(vector torque)
 	if not validPhysics(this) then return self:throw("Invalid physics object!", nil) end
 	if not isOwner(self, this) then return self:throw("You do not own this entity!", nil) end
 	if torque:IsZero() then return end
+	torque = clamp(torque)
 
 	local phys = this:GetPhysicsObject()
 
-	-- Convert torque from local to world axis
-	torque = phys:LocalToWorldVector( clamp(torque) )
-	-- Convert rad*in^2 to deg*m^2
-	phys:ApplyTorqueCenter( torque * (180 / math.pi / 39.3701^2) )
+	-- Convert rad*in^2 to deg*m^2 and torque to velocity
+	phys:AddAngleVelocity( torque * (180 / math.pi / 39.3701^2) * phys:GetInvInertia() )
 end
 
 e2function vector entity:inertia()
@@ -889,26 +933,26 @@ end)
 __e2setcost(5)
 
 e2function entity entity:driver()
-	if not IsValid(this) or not this:IsVehicle() then return self:throw("Invalid vehicle!", nil) end
+	if not IsValid(this) or not this:IsVehicle() then return self:throw("Invalid vehicle!", NULL) end
 	return this:GetDriver()
 end
 
 e2function entity entity:passenger()
-	if not IsValid(this) or not this:IsVehicle() then return self:throw("Invalid vehicle!", nil) end
+	if not IsValid(this) or not this:IsVehicle() then return self:throw("Invalid vehicle!", NULL) end
 	return this:GetPassenger(0)
 end
 
 --- Returns <ent> formatted as a string. Returns "<code>(null)</code>" for invalid entities.
 e2function string toString(entity ent)
-	if not IsValid(ent) then
-		if ent:IsWorld() then
+	if ent then
+		if ent:IsValid() then
+			return tostring(ent)
+		elseif ent:IsWorld() then
 			return "(world)"
 		end
-
-		return "(null)"
 	end
 
-	return tostring(ent)
+	return "(null)"
 end
 
 e2function string entity:toString() = e2function string toString(entity ent)
@@ -1249,10 +1293,38 @@ e2function void entity:noCollideAll(number state)
 	this:SetCollisionGroup(state == 0 and COLLISION_GROUP_NONE or COLLISION_GROUP_WORLD)
 end
 
+__e2setcost(5)
+
+E2Lib.registerConstant("SOLID_NONE", SOLID_NONE)
+E2Lib.registerConstant("SOLID_BSP", SOLID_BSP)
+E2Lib.registerConstant("SOLID_BBOX", SOLID_BBOX)
+E2Lib.registerConstant("SOLID_OBB", SOLID_OBB)
+E2Lib.registerConstant("SOLID_OBB_YAW", SOLID_OBB_YAW)
+E2Lib.registerConstant("SOLID_CUSTOM", SOLID_CUSTOM)
+E2Lib.registerConstant("SOLID_VPHYSICS", SOLID_VPHYSICS)
+
+e2function number entity:getSolid()
+	if not IsValid(this) then return self:throw("Invalid entity!", -1) end
+	return this:GetSolid()
+end
+
+e2function number entity:isSolid()
+	if not IsValid(this) then return self:throw("Invalid entity!", 0) end
+	return this:IsSolid() and 1 or 0
+end
+
+e2function number entity:getGravity()
+	if not IsValid(this) then return self:throw("Invalid entity!", -1) end
+	return this:GetGravity()
+end
+
+e2function entity entity:getGroundEntity()
+	if not IsValid(this) then return self:throw("Invalid entity!", NULL) end
+	return this:GetGroundEntity()
+end
+
 --[[******************************************************************************]]
 -- Flexes
-
-__e2setcost(5)
 
 e2function array entity:getFlexBounds(number flex)
 	if not IsValid(this) then return self:throw("Invalid entity!", {}) end

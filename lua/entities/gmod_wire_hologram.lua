@@ -1,11 +1,12 @@
 AddCSLuaFile()
 DEFINE_BASECLASS("base_anim") -- NOTE: Not base_wire_entity! Simpler than that
 ENT.PrintName = "Wire Hologram"
-ENT.RenderGroup = RENDERGROUP_OPAQUE
 ENT.DisableDuplicator = true
 
 function ENT:SetupDataTables()
 	self:NetworkVar( "Entity", 0, "PlayerEnt" )
+	self:NetworkVar( "Bool", 0, "InvertModel" )
+	self:NetworkVar( "Bool", 1, "DisableShading" )
 end
 
 function ENT:GetPlayer()
@@ -113,16 +114,9 @@ if CLIENT then
 		render.EnableClipping(selfTbl.oldClipState)
 	end
 
-	function ENT:Draw()
+	function ENT:Draw(flags)
 		local selfTbl = EntityMeta.GetTable(self)
 		if selfTbl.blocked or selfTbl.notvisible then return end
-
-		local _, _, _, alpha = EntityMeta.GetColor4Part(self)
-		if alpha ~= 255 then
-			selfTbl.RenderGroup = RENDERGROUP_BOTH
-		else
-			selfTbl.RenderGroup = RENDERGROUP_OPAQUE
-		end
 
 		local hasclips = next(selfTbl.clips)
 
@@ -130,18 +124,21 @@ if CLIENT then
 			SetupClipping(selfTbl)
 		end
 
-		local invert_model = EntityMeta.GetNWInt(self, "invert_model")
-		render.CullMode(invert_model)
+		local invert_model = selfTbl.GetInvertModel(self)
 
-		if EntityMeta.GetNWBool(self, "disable_shading") then
-			render.SuppressEngineLighting(true)
-			EntityMeta.DrawModel(self)
-			render.SuppressEngineLighting(false)
-		else
-			EntityMeta.DrawModel(self)
+		if invert_model then
+			render.CullMode(1)
 		end
 
-		if invert_model ~= 0 then
+		if selfTbl.GetDisableShading(self) then
+			render.SuppressEngineLighting(true)
+			EntityMeta.DrawModel(self, flags)
+			render.SuppressEngineLighting(false)
+		else
+			EntityMeta.DrawModel(self, flags)
+		end
+
+		if invert_model then
 			render.CullMode(0)
 		end
 
@@ -386,6 +383,8 @@ if CLIENT then
 
 	concommand.Add("wire_holograms_unblock_client",
 		function(ply, command, args)
+			if not args[1] then print("Invalid steamid") return end
+
 			local toblock = checkSteamid(args[1])
 			if not toblock then print("Invalid SteamId") return end
 			if not blocked[toblock] then print("This steamid isn't blocked") return end

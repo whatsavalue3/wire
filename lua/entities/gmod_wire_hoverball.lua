@@ -1,7 +1,7 @@
 AddCSLuaFile()
 DEFINE_BASECLASS( "base_wire_entity" )
 ENT.PrintName       = "Wire Hoverball"
-ENT.RenderGroup		= RENDERGROUP_BOTH
+ENT.WantsTranslucency = true
 ENT.WireDebugName	= "Hoverball"
 
 -- Shared
@@ -14,7 +14,8 @@ if CLIENT then
 	local drawhoverballs = CreateConVar( "cl_drawhoverballs", "1" )
 	local glowmat = Material( "sprites/light_glow02_add" )
 
-	function ENT:DrawTranslucent()
+	function ENT:DrawTranslucent(flags)
+		BaseClass.DrawTranslucent(self, flags)
 		if not drawhoverballs:GetBool() then return end
 
 		if self:IsOn() then
